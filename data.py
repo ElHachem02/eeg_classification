@@ -1,112 +1,108 @@
-from re import X
-import scipy.io
-import numpy as np
 import torch
+from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader, Dataset
+from utils import load_data_and_labels
+import pandas as pd
 
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.data.dataloader import default_collate
-from sklearn.preprocessing import OrdinalEncoder
-
+# Assuming `dataset` is a class that extends torch.utils.data.Dataset
 class dataset(Dataset):
-    def __init__(self, X, y, train=True):
-        self.X = X
-        self.y = y
-        self.train=train
+    def __init__(self, X, y, transform=None, fs=256, window_sec=10, device="mps"):
+        self.window_size = fs * window_sec  # Total number of samples in 20 seconds
+        self.X = [self._extract_window(df) for df in X]  # Extract a 20-second window
+        self.y = torch.tensor(y.values if isinstance(y, pd.Series) else y, dtype=torch.long)  # Convert y to numpy array if it's a pandas Series
+        self.transform = transform
+        
+        self.device = device  # Device to move tensors to
 
+        # Move tensors to the specified device
+        self.X = torch.stack(self.X).to(self.device)
+        self.y = self.y.to(self.device)
+        
+    def _extract_window(self, df):
+        # Ensure that we have at least `self.window_size` samples
+        if len(df) < self.window_size:
+            raise ValueError("Data point length is less than the required window size")
+        return torch.tensor(df.iloc[:self.window_size, 1:].values, dtype=torch.float32)
+    
     def __len__(self):
-        return len(self.y)
-
-    # def __getitem__(self, idx):
-    #     rng = np.random.randint(0, high=200)
-    #     if self.train:
-    #         x = self.X[idx][:, rng:rng + 600]
-    #     else:
-    #         x = self.X[idx][:, 200: 800]
-    #     return x, self.y[idx]
+        length = len(self.X)
+        print(f"Dataset length: {length}")
+        return length
 
     def __getitem__(self, idx):
-        x = self.X[idx]
-        if self.train:
-#             rn = np.random.randint(0, high=500)
-#             x = x[:, rn:rn+4000]
-            x = x[:, 0:4000]
-        else:
-            x = x[:, 0:4000]
-        return x, self.y[idx]
+        sample = {'X': self.X[idx], 'y': self.y[idx]}
+        if self.transform:
+            sample = self.transform(sample)
+        return sample
 
-def generate_x_train(mat):
-    # out: num_data_points * chl * trial_length
-    data = []
-    last_label = False
-    for i in range(0, len(mat['mrk'][0][0][0][0])-1):
-        start_idx = mat['mrk'][0][0][0][0][i]
-        end_idx = mat['mrk'][0][0][0][0][i+1]
-        # to resolve shape issues, we use a shifted window 
-        # (possible overlapping but acceptable given it's trivial)
-        end_idx += (8000 + start_idx - end_idx) 
-        data.append(mat['cnt'][start_idx: end_idx,].T)
-    # add the last datapoint
-    if len(mat['cnt']) - mat['mrk'][0][0][0][0][-1] >= 8000:
-        last_label = True
-        start_idx = mat['mrk'][0][0][0][0][-1]
-        end_idx = start_idx + 8000
-        data.append(mat['cnt'][start_idx: end_idx,].T)
-    return np.array(data), last_label
+def _generate_data(processed_subjects):
+    data_dict = {}
+    X_all = []
+    y_all = []
+    
+    for subject, (X_list, y_list) in processed_subjects.items():
+        # Concatenate the list of DataFrames into a single DataFrame
+        X = X_list
+        y = y_list
+        
+        # Split the data
+        X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.4, random_state=42)
+        X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+        
+        # Store the splits in the dictionary
+        data_dict[subject] = {
+            'X_train': X_train,
+            'y_train': y_train,
+            'X_val': X_val,
+            'y_val': y_val,
+            'X_test': X_test,
+            'y_test': y_test
+        }
+        
+        # Append to the combined data
+        X_all.extend(X)
+        y_all.extend(y)
+    
+    # Create DataFrame with all data points and labels
+    X_combined = X_all
+    y_combined = y_all
+    
+    # Split the combined data
+    X_train_combined, X_temp_combined, y_train_combined, y_temp_combined = train_test_split(X_combined, y_combined, test_size=0.4, random_state=42)
+    X_val_combined, X_test_combined, y_val_combined, y_test_combined = train_test_split(X_temp_combined, y_temp_combined, test_size=0.5, random_state=42)
+    
+    combined_data = {
+        'X_train': X_train_combined,
+        'y_train': y_train_combined,
+        'X_val': X_val_combined,
+        'y_val': y_val_combined,
+        'X_test': X_test_combined,
+        'y_test': y_test_combined
+    }
+        
+    return data_dict, combined_data
 
-def generate_y_train(mat, last_label):
-    # out: 1 * num_labels
-    class1, class2 = mat['nfo']['classes'][0][0][0][0][0], mat['nfo']['classes'][0][0][0][1][0]
-    mapping = {-1: class1, 1: class2}
-    labels = np.vectorize(mapping.get)(mat['mrk'][0][0][1])[0]
-    if not last_label:
-        labels = labels[:-1]
-    return labels
 
-def generate_data(files):
-    X, y = [], []
-    for file in files:
-        print(file)
-        mat = scipy.io.loadmat(file)
-        X_batch, last_label = generate_x_train(mat)
-        X.append(X_batch)
-        y.append(generate_y_train(mat, last_label))
-    X, y = np.concatenate(X, axis=0), np.concatenate(y)
-    y = OrdinalEncoder().fit_transform(y.reshape(-1, 1))
-    return X, y
-
-def split_data(X, y):
-    def get_idx():
-        np.random.seed(seed=42)
-        rng = np.random.choice(len(y), len(y), replace=False)
-        return rng
-    train_size, val_size, test_size = 1000, 197, 200
-    indices = get_idx()
-    train_idx, val_idx, test_idx = indices[0: train_size], \
-                indices[train_size: train_size + val_size], indices[train_size + val_size:]
-    train_X, train_y, val_X, val_y, test_X, test_y = \
-        X[train_idx], y[train_idx], X[val_idx], y[val_idx], X[test_idx], y[test_idx]
-    return train_X, train_y, val_X, val_y, test_X, test_y
-
-def get_loaders(train_X, train_y, val_X, val_y, test_X, test_y):
-    train_set, val_set, test_set = dataset(train_X, train_y, True), dataset(val_X, val_y, False), dataset(test_X, test_y, False)
-    data_loader_train = torch.utils.data.DataLoader(
+def _get_loaders(train_X, train_y, val_X, val_y, test_X, test_y):
+    train_set, val_set, test_set = dataset(train_X, train_y), dataset(val_X, val_y), dataset(test_X, test_y)
+    data_loader_train = DataLoader(
         train_set, 
         batch_size=1, 
-        num_workers=1,
+        num_workers=0,
         pin_memory=True, 
         drop_last=False,
     )
-    data_loader_val = torch.utils.data.DataLoader(
+    data_loader_val = DataLoader(
             val_set, 
             batch_size=1, 
-            num_workers=1,
+            num_workers=0,
             pin_memory=True, 
             drop_last=False,
     )
-    data_loader_test = torch.utils.data.DataLoader(
+    data_loader_test = DataLoader(
             test_set, 
-            batch_size=1, 
-            num_workers=1,
+            batch_size=1,
+            num_workers=0,
             pin_memory=True, 
             drop_last=False,
     )
@@ -116,3 +112,21 @@ def get_loaders(train_X, train_y, val_X, val_y, test_X, test_y):
         'test': data_loader_test
     }
     return dataloaders
+
+
+def generate_data_with_loaders():
+    processed_subjects = load_data_and_labels()
+    data_dict, combined_data = _generate_data(processed_subjects)
+    
+    dataloaders_dict = {}
+    for subject, splits in data_dict.items():
+        dataloaders = _get_loaders(splits['X_train'], splits['y_train'], splits['X_val'], splits['y_val'], splits['X_test'], splits['y_test'])
+        dataloaders_dict[subject] = dataloaders
+    
+    combined_dataloaders = _get_loaders(
+        combined_data['X_train'], combined_data['y_train'],
+        combined_data['X_val'], combined_data['y_val'],
+        combined_data['X_test'], combined_data['y_test']
+    )
+    
+    return data_dict, combined_data, dataloaders_dict, combined_dataloaders

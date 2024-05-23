@@ -1,58 +1,67 @@
-import requests
-import zipfile
+import pandas as pd
 
-import numpy as np
-import matplotlib.pyplot as plt
+# Example usage
+data_folder = '/Users/peter/Documents/Academy/University/ETH/courses/ma_2/ai_project/EEG-Transformer/data/experiment/grouped_data/x_points'  # replace with your data folder path
+labels_folder = '/Users/peter/Documents/Academy/University/ETH/courses/ma_2/ai_project/EEG-Transformer/data/experiment/grouped_data/labels'  # replace with your labels folder path
+subjects = ['lea','finn','sarah', 'aurora', 'bjoern', 'derek', 'dimi', 'ronan'] # add all subjects here
+# ,'finn','sarah', 'aurora', 'bjoern', 'derek', 'dimi', 'ronan'
 
-def get_data():
-    print('Downloading started')
-    url = 'http://bbci.de/competition/download/competition_iv/BCICIV_1calib_1000Hz_mat.zip'
+SAMPLING_RATE = 256
+SEED = 42
 
-    username = 'replace_with_your_own_username'
-    password = 'replace_with_your_own_password'
-    req = requests.get(url, auth=(username,password))
-    filename = url.split('/')[-1]
+def _to_true_label(label):
+    if label == 100:
+        raise Exception("Must skip labels with value 100!")
+    if label == 195:
+        return 1
+    if label == 196:
+        return 2
+    return 0
 
-    with open(filename,'wb') as output_file:
-        output_file.write(req.content)
-    print('Downloading Completed')
+def _split_data(data, labels, timestamps):    
+    x = []
+    y = []
+    start = timestamps[0]
+    for i, label in enumerate(labels):
+        if i == 0: continue
+        end = timestamps[i]
+        if label != 100:
+            x.append(data[int(start):int(end)])
+            y.append(_to_true_label(label))
+        start = timestamps[i]
+    y = pd.Series(y)
+    return (x,y)
 
-    # Change to your path
-    print('Unzipping')
-    path_to_zip_file = 'BCICIV_1calib_1000Hz_mat.zip'
-    with zipfile.ZipFile(path_to_zip_file, 'r') as zip_ref:
-        zip_ref.extractall('data/')
-    print('Unzipping Completed')
-    return
+# Data will be of the form
+'''
+Ronan -> ([list of df], [list of labels])
+'''
 
-def parse_log(fp):
-    log = {
-        'log_info': fp,
-        'train_loss': [],
-        'val_loss': [],
-        'train_acc':[],
-        'val_acc': []
-    }
-    f = open(fp, 'r')
-    lines = f.readlines()
-    for line in lines:
-        if 'train Loss' in line:
-            line = line.split()
-            log['train_loss'].append(float(line[2]))
-            log['train_acc'].append(float(line[4]))
-        elif 'val Loss' in line:
-            line = line.split()
-            log['val_loss'].append(float(line[2]))
-            log['val_acc'].append(float(line[4]))
-    return log
+def _generate_subject_data():
+    subj_data = {}
+    for subj in subjects:
+        print(subj)
+        df = pd.read_csv(labels_folder+"/events_" + subj + ".txt", delim_whitespace=True)
+        df = df[(df.number != "condition")]
+        subj_data[subj] = {}
+        subj_data[subj]["labels"] = df["number"].to_numpy().astype(float)
+        subj_data[subj]["timestamps"] = df["type"].to_numpy().astype(float)
+        if subj == 'aurora': # aurora is another format
+            df = pd.read_csv(data_folder+"/" + subj + "_pre_processed_data.txt", delim_whitespace=True)
+        else:
+            df = pd.read_csv(data_folder+"/" + subj + "_pre_processed_data.txt", delim_whitespace=False)
+        subj_data[subj]["data"] = df
+                
+    for x in subjects:
+        if subj_data[x]['labels'][0] != 100:
+            print ("Something wrong with labels for " + x)
+    
+    return subj_data
 
-def plot_log(fp):
-    log = parse_log(fp)
-    f, ax = plt.subplots(1, 2, figsize=(15,5))
-    ax[0].plot(log['train_acc'], label='Training Accuracy', linestyle='dashed')
-    ax[0].plot(log['val_acc'], label='Validation Accuracy', linestyle='dashed')
-    ax[0].legend()
-    ax[1].plot(log['train_loss'], label='Training Loss', linestyle='dashed')
-    ax[1].plot(log['val_loss'], label='Validation Loss', linestyle='dashed')
-    ax[1].legend()
-    f.suptitle(f'Experiment Log: {fp}')
+def load_data_and_labels():
+    subj_data = _generate_subject_data()
+    processed_subjects = {}
+    for s in subjects:
+        processed_subjects[s] = _split_data(subj_data[s]['data'], subj_data[s]['labels'], subj_data[s]['timestamps'])
+        
+    return processed_subjects

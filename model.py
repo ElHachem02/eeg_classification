@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-
-from timm.models.layers import PatchEmbed, Mlp, DropPath
+from timm.models.layers import Mlp, DropPath
 from timm.models.registry import register_model
 
 class Attention(nn.Module):
@@ -19,7 +18,7 @@ class Attention(nn.Module):
     def forward(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv[0], qkv[1], qkv[2]  #make torchscript happy (cannot use tensor as tuple)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
@@ -31,14 +30,12 @@ class Attention(nn.Module):
         return x
 
 class Block(nn.Module):
-    
     def __init__(self, dim, num_heads=8, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = Attention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
@@ -50,49 +47,48 @@ class Block(nn.Module):
         return x
 
 class EEGTransformer(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes=3, dim=256, decoder_depth=1, num_channels=64):
         super().__init__()
-        self.dim = 4000
-        self.decoder_depth = 1
+        self.dim = dim
+        self.decoder_depth = decoder_depth
+        self.num_channels = num_channels
+
+        # Linear layer to project input from num_channels to dim
+        self.input_proj = nn.Linear(num_channels, dim)
+
         self.blocks = nn.Sequential(*[
             Block(
-                dim= self.dim,
-                drop= 0.2,
-                attn_drop= 0.2,
+                dim=self.dim,
+                drop=0.2,
+                attn_drop=0.2,
             )
-            for i in range(self.decoder_depth)])
+            for _ in range(self.decoder_depth)])
         self.relu = nn.ReLU()
-        # self.softmax = nn.Softmax()
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.dim)) # 1, 1, 8000
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.dim))
 
-        # self.fc1 = nn.Linear(60, 512)
         self.fc1 = nn.Linear(self.dim, 512)
+        self.fc2 = nn.Linear(512, num_classes)
 
-        self.fc2 = nn.Linear(512, 3)
-
-        
         torch.nn.init.normal_(self.cls_token, std=.02)
-        
-    def forward(self, x):
-        # x -> bz x 59 x 8000
-        # print(x.shape)
-        cls_token = self.cls_token.repeat(x.shape[0], 1, 1) # bz x 1 x 8000
-        x = torch.cat((x, cls_token), 1) # bz x 60 x 8000
-        x = self.blocks(x)
 
-        # cls_token = x[:, -1, :].squeeze(1).unsqueeze(-1) # bz x 8000 x 1
-        # attn_map = torch.bmm(x, cls_token).squeeze(-1) # bz x 60
-        # attn_map = self.relu(self.fc1(attn_map))
-        # attn_map = self.fc2(attn_map)
-        # return attn_map
+    def forward(self, x):
+        # Define the device
+        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        x = x.to(device)
+
+        # Project the input from num_channels to dim
+        x = self.input_proj(x)
+
+        cls_token = self.cls_token.repeat(x.shape[0], 1, 1)
+        x = torch.cat((x, cls_token), 1)
+        x = self.blocks(x)
 
         cls_token = x[:, -1, :].squeeze(1)
         cls_token = self.relu(self.fc1(cls_token))
         cls_token = self.fc2(cls_token)
         return cls_token
-    
+
 @register_model
 def eegt(**kwargs):
     model = EEGTransformer()
     return model
-
