@@ -8,8 +8,7 @@ from timm.utils import NativeScaler
 from model import EEGTransformer
 from timm.optim import AdamP
 from timm.scheduler import CosineLRScheduler
-
-
+from sklearn.metrics import f1_score, balanced_accuracy_score, accuracy_score, classification_report
 
 def prepare_training():
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
@@ -53,9 +52,12 @@ def train_model(model, criterion, optimizer, scheduler, device, dataloaders):
             running_corrects = 0
             dataset_size = 0
             
+            all_labels = []
+            all_preds = []
+
             for batch in tqdm.tqdm(dataloaders[phase]):
-                inputs = batch['X'] 
-                labels = batch['y']
+                inputs = batch['X'].to(device)
+                labels = batch['y'].to(device)
 
                 # Zero the parameter gradients
                 optimizer.zero_grad()
@@ -77,6 +79,9 @@ def train_model(model, criterion, optimizer, scheduler, device, dataloaders):
                 running_corrects += torch.sum(preds == labels.data)
                 dataset_size += inputs.size(0)
 
+                all_labels.extend(labels.cpu().numpy())
+                all_preds.extend(preds.cpu().numpy())
+
             if phase == 'train':
                 scheduler.step(epoch=epoch)
                 
@@ -86,7 +91,15 @@ def train_model(model, criterion, optimizer, scheduler, device, dataloaders):
             epoch_loss = running_loss / dataset_size
             epoch_acc = running_corrects.float() / dataset_size
 
-            print('{} Loss: {:.4f} Acc: {:.4f}'.format(phase, epoch_loss, epoch_acc))
+            # Compute additional metrics
+            f1 = f1_score(all_labels, all_preds, average='weighted')
+            balanced_acc = balanced_accuracy_score(all_labels, all_preds)
+            accuracy = accuracy_score(all_labels, all_preds)
+            report = classification_report(all_labels, all_preds)
+
+            print('{} Loss: {:.4f} Acc: {:.4f} F1: {:.4f} Balanced Acc: {:.4f}'.format(
+                phase, epoch_loss, epoch_acc, f1, balanced_acc))
+            print(report)
 
             # Deep copy the model
             if phase == 'val' and epoch_acc > best_acc:
