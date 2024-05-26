@@ -3,8 +3,7 @@ import pandas as pd
 # Example usage
 data_folder = '/Users/peter/Documents/Academy/University/ETH/courses/ma_2/ai_project/EEG-Transformer/data/experiment/grouped_data/x_points'  # replace with your data folder path
 labels_folder = '/Users/peter/Documents/Academy/University/ETH/courses/ma_2/ai_project/EEG-Transformer/data/experiment/grouped_data/labels'  # replace with your labels folder path
-subjects = ['lea','finn','sarah', 'aurora', 'bjoern', 'derek', 'dimi', 'ronan'] # add all subjects here
-# ,'finn','sarah', 'aurora', 'bjoern', 'derek', 'dimi', 'ronan'
+subjects = ['finn', 'aurora', 'bjoern', 'derek', 'dimi', 'ronan'] # add all subjects here
 
 SAMPLING_RATE = 256
 SEED = 42
