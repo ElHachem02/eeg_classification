@@ -65,3 +65,27 @@ def load_data_and_labels():
         processed_subjects[s] = _split_data(subj_data[s]['data'], subj_data[s]['labels'], subj_data[s]['timestamps'])
         
     return processed_subjects
+
+def _split_texts_LTO(data, labels, timestamps):
+    texts = []
+    x = []
+    y = []
+    start = timestamps[0]
+    for i, label in enumerate(labels):
+        if i == 0: continue
+        end = timestamps[i]
+        if label != 100:
+            x.append(data[int(start):int(end)])
+            y.append(_to_true_label(label))
+        else:
+            texts.append((x,y))
+            x = []
+            y = []
+        start = timestamps[i]
+    texts.append((x,y))
+    if len(texts) != 3:
+        raise Exception("Texts must be 3, not " + str(len(texts)))
+    return texts
+
+def load_data_LTO():
+

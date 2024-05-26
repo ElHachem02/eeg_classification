@@ -1,7 +1,7 @@
 import torch
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
-from utils import load_data_and_labels
+from utils import load_data_and_labels, subjects, split_data_LOPO
 import pandas as pd
 
 # Assuming `dataset` is a class that extends torch.utils.data.Dataset
@@ -83,25 +83,25 @@ def _generate_data(processed_subjects):
     return data_dict, combined_data
 
 
-def _get_loaders(train_X, train_y, val_X, val_y, test_X, test_y):
+def _get_loaders(train_X, train_y, val_X, val_y, test_X, test_y, batch_size=3):
     train_set, val_set, test_set = dataset(train_X, train_y), dataset(val_X, val_y), dataset(test_X, test_y)
     data_loader_train = DataLoader(
         train_set, 
-        batch_size=1, 
+        batch_size=batch_size, 
         num_workers=0,
         pin_memory=True, 
         drop_last=False,
     )
     data_loader_val = DataLoader(
             val_set, 
-            batch_size=1, 
+            batch_size=batch_size, 
             num_workers=0,
             pin_memory=True, 
             drop_last=False,
     )
     data_loader_test = DataLoader(
             test_set, 
-            batch_size=1,
+            batch_size=batch_size,
             num_workers=0,
             pin_memory=True, 
             drop_last=False,
@@ -111,6 +111,11 @@ def _get_loaders(train_X, train_y, val_X, val_y, test_X, test_y):
         'val': data_loader_val,
         'test': data_loader_test
     }
+    return dataloaders
+
+def generate_data_LOSO(val_subject, test_subject):
+    (X_train, y_train), (X_val, y_val), (X_test, y_test) = generate_data_with_subject_splits(val_subject, test_subject)
+    dataloaders = _get_loaders(X_train, y_train, X_val, y_val, X_test, y_test)
     return dataloaders
 
 
@@ -130,3 +135,36 @@ def generate_data_with_loaders():
     )
     
     return data_dict, combined_data, dataloaders_dict, combined_dataloaders
+
+def generate_data_with_subject_splits(val_subject, test_subject):
+    processed_subjects = load_data_and_labels()
+    train_subjects = [s for s in subjects if s != val_subject and s != test_subject]
+
+    X_train, y_train = [], []
+    X_val, y_val = processed_subjects[val_subject]
+    X_test, y_test = processed_subjects[test_subject]
+
+    for subj in train_subjects:
+        X, y = processed_subjects[subj]
+        X_train.extend(X)
+        y_train.extend(y)
+
+    return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+
+def _generate_data_LOPO():
+    X1, y1, X2, y2, X3, y3 = split_data_LOPO()
+    train_X = X1 + X2
+    train_y = y1 + y2
+
+    # Split X3 and y3 into validation and test sets
+    val_size = int(len(X3) * 0.5)
+    val_X, val_y = X3[:val_size], y3[:val_size]
+    test_X, test_y = X3[val_size:], y3[val_size:]
+
+    return train_X, train_y, val_X, val_y, test_X, test_y
+
+
+def generate_data_LOPO():
+    train_X, train_y, val_X, val_y, test_X, test_y = _generate_data_LOPO()
+    dataloaders = _get_loaders(train_X, train_y, val_X, val_y, test_X, test_y)
+    return dataloaders
