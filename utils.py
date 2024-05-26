@@ -88,4 +88,19 @@ def _split_texts_LTO(data, labels, timestamps):
     return texts
 
 def load_data_LTO():
-
+    subj_data = _generate_subject_data()
+    X1 = []
+    X2 = []
+    X3 = []
+    y1 = []
+    y2 = []
+    y3 = []
+    for subj in subjects:
+        print(subj)
+        texts = _split_texts_LTO()(subj_data[subj]['data'], subj_data[subj]['labels'], subj_data[subj]['timestamps'])
+        X1 += texts[0][0]
+        y1 += texts[0][1]
+        X2 += texts[1][0]
+        y2 += texts[1][1]
+        X3 += texts[2][0]
+        y3 += texts[2][1]
